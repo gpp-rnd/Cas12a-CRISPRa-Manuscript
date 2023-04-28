@@ -1,0 +1,304 @@
+---
+title: "DESeq2"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r, import packages, results = FALSE, message=FALSE}
+library("data.table")
+library("RColorBrewer")
+library("dplyr")
+library("tibble")
+library("stringr")
+library("readxl")
+library("reshape")
+library("DESeq2")
+library('biomaRt')
+library("ggplot2")
+par(font.main=6)
+
+```
+
+```{r}
+coul <- brewer.pal(8, "Set2") 
+coul
+pie(rep(1, length(coul)), col = coul , main="") 
+
+```
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+```{r, functions}
+design_file <- function(raw_readcount_file, sample_id_file) {
+  #raw_readcount_file: Raw read count file
+  #sample_id_file: contains the columns from readcount file and matching name/annotation
+   testCondition <- as.data.frame(colnames(raw_readcount_file))
+   colnames(testCondition) <- 'sample_id'
+   testCondition <- merge(testCondition, sample_id_file[,c('sample_id', 'Name')], by = 'sample_id',all = FALSE)
+   testCondition <- testCondition[match(colnames(raw_readcount_file), testCondition$sample_id),]
+   colnames(testCondition) <- c('SampleID', 'Condition') 
+   return(testCondition)
+}
+
+set_up_dds <- function(raw_readcount_file, sample_id_file, reference, filter_count = 10){
+  #raw_readcount_file: Raw read count file
+  #sample_id_file: contains the columns from readcount file and matching name/annotation
+  #reference: string of the reference condition 
+  testCondition <- design_file(raw_readcount_file, sample_id_file)
+  dds <- DESeqDataSetFromMatrix(countData=round(raw_readcount_file), 
+                              colData=testCondition, 
+                              design=~Condition)
+  dds$Condition <- relevel(dds$Condition, ref = reference)
+  dds <- dds[ rowSums(counts(dds)) > 10, ]
+  return(dds)
+}
+
+baseline_lfc_plot <- function(shrink_dds, norm_count, sample_id_file, reference, title){
+  bl_color_scale = c("red","#373737")
+  x_label = "log2(baseline expression)"
+  y_label = "Shrunken log2FoldChange"
+
+  # calculate the average normalized readcount for the baseline(control)
+  norm_count$ctl_mean <- rowMeans(norm_count[,sample_id_file[sample_id_file$Name == reference,]$sample_id])
+  
+  # merging normalized readcount and statistical estimates from DESeq2 
+  together_comp <- merge(shrink_dds, norm_count, by = 0)
+  
+  colnames(together_comp)[1] <- 'gene_id'
+  
+  # create a column to indicate CD4
+  together_comp$sig <- 'False'
+  together_comp[together_comp[,'gene_id']  == 'ENSG00000010610.9',]$sig = 'CD4'
+  
+  
+  # graph
+  ggplot(together_comp %>% arrange(desc(sig)), aes(x=log2(ctl_mean), y=log2FoldChange, color=sig)) + 
+    geom_point( size = 4) + 
+    theme_classic() + 
+    xlab(x_label) + 
+    ylab(y_label) + 
+    theme(text = element_text(size = 15)) +
+    geom_text(aes(label=ifelse(gene_id == 'ENSG00000010610.9',as.character('CD4'),'')),hjust=0,vjust=0, size = 6)+
+    scale_colour_manual(values= bl_color_scale) + ylim(-7, 10)  + guides(color = FALSE) +
+    ggtitle(title) +
+    ggeasy::easy_center_title()
+}
+
+
+convertEnsIdToGeneName = function(ensembleId.list){
+  
+  mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+  
+  genelist <- getBM(filters=c("ensembl_gene_id"), 
+                    attributes= c("ensembl_gene_id","hgnc_symbol"),
+                    values=ensembleId.list,
+                    mart=mart)
+  
+  return(genelist[match(ensembleId.list, genelist$ensembl_gene_id),])
+  
+}
+```
+
+```{r, import readcount, results = FALSE, message=FALSE}
+base_path <- '/Users/fzheng/Google Drive/Shared drives/GPP Cloud /R&D/People/Fengyi/Cas12a/RNA_seq/terra/outputs/'
+rsem <-'/call-rsem/'
+rna_agg <-'/RNA_aggregate/call-rsem_aggregate_results/'
+all_samples <- c('Meljuso_RDA763_RDA988_RepA',  'Meljuso_RDA816_RDA811_RepC', 
+             'Meljuso_RDA763_RDA988_RepB',  'Meljuso_RDA816_RDA986_RepA',
+             'Meljuso_RDA763_RDA988_RepC',  'Meljuso_RDA816_RDA986_RepB',
+             'Meljuso_RDA816_RDA810_RepA',  'Meljuso_RDA816_RDA986_RepC',
+             'Meljuso_RDA816_RDA810_RepB',  'Meljuso_RDA816_RDA987_RepA',
+             'Meljuso_RDA816_RDA810_RepC',  'Meljuso_RDA816_RDA987_RepB',
+             'Meljuso_RDA816_RDA811_RepA',  'Meljuso_RDA816_RDA987_RepC',
+             'Meljuso_RDA816_RDA811_RepB')
+
+# The aggregated isoform is equal to gene
+read_files <- paste0(base_path, all_samples, rsem, all_samples, '.rsem.genes.results.gz')
+
+
+reads_list <- lapply(read_files, function(x) {
+  r <- fread(x, select = c("gene_id", "expected_count"))
+  file_name <- unlist(strsplit(x, "Meljuso_"))[2]
+  # Change the expected_count column to the sample name
+  setnames(r, c("gene_id", sub("/call-rsem/", "", file_name)))
+})
+reads_df <- Reduce(function(x, y) merge(x, y, by = "gene_id", all=TRUE), reads_list)
+readcount<- as.data.frame(reads_df)
+```
+
+```{r, prepare the file to run deseq2, results = FALSE, message=FALSE}
+readcount <- data.frame(readcount, row.names = readcount$gene_id)
+readcount <- readcount[,-c(1)]
+readcount <- mutate_all(readcount, function(x) as.numeric(as.character(x)))
+```
+
+```{r, sample comparsion, results = FALSE, message=FALSE}
+sampleid <- read_excel('/Users/fzheng/Library/CloudStorage/GoogleDrive-fzheng@broadinstitute.org/Shared drives/GPP Cloud /R&D/People/Fengyi/Cas12a/Data/rna_seq/sampleID.xlsx')
+sampleid$sample_id <- sub("Meljuso_", "", sampleid$sample_id)
+
+
+```
+
+
+
+### Parental Control vs VP64_p65_no_guide
+
+```{r, set up dds object and run for comp_5_4, results = FALSE, message=FALSE}
+comp_5_4 <- readcount[, c( sampleid[ sampleid$Name %in%  c('Control', 'VP64_p65_no_guide'),]$sample_id)]
+
+dds_comp_5_4 <- set_up_dds(comp_5_4, sampleid, 'Control')
+## shrinken LFC 
+dds_comp_5_4 <- DESeq(dds_comp_5_4)
+shrink_dds_comp_5_4 <- lfcShrink(dds_comp_5_4, coef=2)#resultsNames(dds_comp_5_4)[2]
+shrink_dds_comp_5_4 <- as.data.frame(na.omit(shrink_dds_comp_5_4))
+
+## normalized readcount
+norm_count_5_4<- counts(dds_comp_5_4, normalized=TRUE)
+norm_count_5_4 <- as.data.frame(norm_count_5_4)
+#baseline lfc plot
+baseline_lfc_plot(as.data.frame(shrink_dds_comp_5_4), norm_count_5_4, sampleid, 'Control', resultsNames(dds_comp_5_4)[2])
+
+```
+### Parental Control vs VP64_vp64_no_guide 
+
+```{r, run and clean deseq2 for comp_5_3 and add gene name, results = FALSE, message=FALSE}
+comp_5_3 <- readcount[, c( sampleid[ sampleid$Name %in%  c('Control', 'VP64_VP64_no_guide'),]$sample_id)]
+
+dds_comp_5_3 <- set_up_dds(comp_5_3, sampleid, 'Control')
+## shrinken LFC 
+dds_comp_5_3 <- DESeq(dds_comp_5_3)
+shrink_dds_comp_5_3 <- lfcShrink(dds_comp_5_3, coef='Condition_VP64_VP64_no_guide_vs_Control')
+shrink_dds_comp_5_3 <- as.data.frame(na.omit(shrink_dds_comp_5_3))
+
+## normalized readcount
+norm_count5_3<- counts(dds_comp_5_3, normalized=TRUE)
+norm_count5_3 <- as.data.frame(norm_count5_3)
+
+#baseline lfc plot
+baseline_lfc_plot(shrink_dds_comp_5_3, norm_count5_3, sampleid, 'Control', resultsNames(dds_comp_5_3)[2])
+
+```
+
+
+
+### VP64_p65_with_guide vs VP64_p65_no_guide 
+
+```{r, test condition for comp_4_2 and set up dds object, results = FALSE, message=FALSE}
+comp_4_2 <- readcount[, c( sampleid[ sampleid$Name %in%  c('VP64_p65_with_guide', 'VP64_p65_no_guide'),]$sample_id)]
+
+dds_comp_4_2 <- set_up_dds(comp_4_2, sampleid, 'VP64_p65_no_guide')
+
+dds_comp_4_2 <- DESeq(dds_comp_4_2)
+shrink_dds_comp_4_2 <- lfcShrink(dds_comp_4_2, coef='Condition_VP64_p65_with_guide_vs_VP64_p65_no_guide')
+shrink_dds_comp_4_2 <- as.data.frame(na.omit(shrink_dds_comp_4_2))
+
+## normalized readcount
+norm_count4_2<- counts(dds_comp_4_2, normalized=TRUE)
+norm_count4_2 <- as.data.frame(norm_count4_2)
+
+#baseline lfc plot
+baseline_lfc_plot(shrink_dds_comp_4_2, norm_count4_2, sampleid, 'VP64_p65_no_guide', resultsNames(dds_comp_4_2)[2])
+
+```
+
+
+
+### VP64_VP64_with_guide vs VP64_VP64_no_guide
+
+```{r, test condition for comp_3_1 and set up dds object, results = FALSE, message=FALSE}
+comp_3_1 <- readcount[, c( sampleid[ sampleid$Name %in%  c('VP64_VP64_with_guide', 'VP64_VP64_no_guide'),]$sample_id)]
+dds_comp_3_1 <- set_up_dds(comp_3_1, sampleid, 'VP64_VP64_no_guide')
+
+## shrinken LFC 
+dds_comp_3_1 <- DESeq(dds_comp_3_1)
+shrink_dds_comp_3_1 <- lfcShrink(dds_comp_3_1, coef=resultsNames(dds_comp_3_1)[2])
+shrink_dds_comp_3_1 <- as.data.frame(na.omit(shrink_dds_comp_3_1))
+
+## normalized readcount
+norm_count3_1<- counts(dds_comp_3_1, normalized=TRUE)
+norm_count3_1 <- as.data.frame(norm_count3_1)
+
+#baseline lfc plot
+baseline_lfc_plot(shrink_dds_comp_3_1, norm_count3_1, sampleid, 'VP64_VP64_no_guide', resultsNames(dds_comp_3_1)[2])
+
+```
+
+
+# Guide Effect
+
+
+```{r gene 50kbs}
+path <- '/Users/fzheng/Library/CloudStorage/GoogleDrive-fzheng@broadinstitute.org/Shared drives/GPP Cloud /R&D/People/Mudra/RNASeq_analysis/Data/external/genes_surrounding_CD4_500kb_v2.csv'
+cd4_surround <- fread(path)
+
+
+```
+```{r import crsipick, echo=FALSE}
+crispick_result <- fread('/Users/fzheng/Library/CloudStorage/GoogleDrive-fzheng@broadinstitute.org/Shared drives/GPP Cloud /R&D/People/Fengyi/Cas12a/Data/rna_seq/genes_surround_500kb/b528b732-sgrna-designs.txt')
+
+
+crispick_result <- crispick_result[,c('Input', 'Target Gene Symbol', 'TSS Position')]
+```
+
+#### 5xtag-dCas12a-VP64 and p65-Nanobody with a cassette containing three CD4-targeting sgRNAs to 5xtag-dCas12a-VP64 and p65-Nanobody without a guide-containing cassette
+```{r VP64_p65_with_guide with VP64_p65_no_guide, echo=FALSE}
+res_df_comp_4_2 <- shrink_dds_comp_4_2
+res_df_comp_4_2 <- tibble::rownames_to_column(res_df_comp_4_2, "V1")
+res_df_comp_4_2[res_df_comp_4_2$padj == 0,]$padj <- .Machine$double.xmin
+res_df_comp_4_2 <- cbind(data.frame(do.call("rbind", strsplit(as.character(res_df_comp_4_2$V1), ".", fixed = TRUE))),res_df_comp_4_2)
+transcrip.list<-res_df_comp_4_2$X1
+gene_lists<- convertEnsIdToGeneName(transcrip.list)
+res_df_comp_4_2<- merge(res_df_comp_4_2,gene_lists, by.x = 'X1', by.y = 'ensembl_gene_id')
+gene_500_4_2 <- merge(crispick_result, res_df_comp_4_2, by.x = 'Input',by.y = 'hgnc_symbol') 
+gene_500_4_2$CD4 <- 'False'
+gene_500_4_2[V1  == 'ENSG00000010610.9']$CD4 = 'CD4'
+
+gene_500_4_2 %>%
+  ggplot(aes(x = `TSS Position`, y =log2FoldChange, color=CD4)) +
+  geom_point(size =4) +  
+  ylab("Shrunken log2FoldChange") + 
+  theme_classic()+ 
+  theme(text = element_text(size = 25)) +
+  geom_text(aes(label=ifelse(V1 == 'ENSG00000010610.9',as.character('CD4'),'')),hjust=0,vjust=0, size = 8) +
+  ylim(-7, 10) + guides(color = FALSE) +
+  scale_colour_manual(values= c("red", "black")) +
+  ggtitle(paste0("nanobody-p65\n CD4 guides vs no guide (n=", nrow(gene_500_4_2), ')')) +
+  ggeasy::easy_center_title()
+
+```
+
+
+#### 5xtag-dCas12a-VP64 and VP64-Nanobody with a cassette containing three CD4-targeting sgRNAs to 5xtag-dCas12a-VP64 and VP64-Nanobody without a guide-containing cassette
+```{r VP64_VP64_with_guide with VP64_VP64_no_guide, echo=FALSE}
+res_df_comp_3_1 <- shrink_dds_comp_3_1
+res_df_comp_3_1 <- tibble::rownames_to_column(res_df_comp_3_1, "V1")
+res_df_comp_3_1[res_df_comp_3_1$padj == 0,]$padj <- .Machine$double.xmin
+res_df_comp_3_1 <- cbind(data.frame(do.call("rbind", strsplit(as.character(res_df_comp_3_1$V1), ".", fixed = TRUE))),res_df_comp_3_1)
+transcrip.list_3_1<-res_df_comp_3_1$X1
+gene_lists_3_1<- convertEnsIdToGeneName(transcrip.list_3_1)
+res_df_comp_3_1<- merge(res_df_comp_3_1,gene_lists_3_1, by.x = 'X1', by.y = 'ensembl_gene_id')
+
+gene_500_3_1 <- merge(crispick_result, res_df_comp_3_1, by.x = 'Input',by.y = 'hgnc_symbol') 
+gene_500_3_1$CD4 <- 'False'
+gene_500_3_1[V1  == 'ENSG00000010610.9']$CD4 = 'CD4'
+gene_500_3_1 %>%
+  ggplot(aes(x = `TSS Position`, y =log2FoldChange, color=CD4)) +
+  geom_point(size =4) +  
+  ylab("Shrunken log2FoldChange") + 
+  theme_classic()+ 
+  theme(text = element_text(size = 25)) +
+  geom_text(aes(label=ifelse(V1 == 'ENSG00000010610.9',as.character('CD4'),'')),hjust=0,vjust=0, size = 8) +
+  ylim(-7, 10) + guides(color = FALSE) +
+  scale_colour_manual(values= c("red", "black")) +
+  ggtitle(paste0("nanobody-VP64\n CD4 guides vs no guide (n=", nrow(gene_500_3_1), ')')) +
+  ggeasy::easy_center_title()
+
+```
+
