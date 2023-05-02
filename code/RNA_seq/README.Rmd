@@ -1,13 +1,9 @@
 ---
 title: "DESeq2"
-output:
-  html_document:
-    df_print: paged
+output: github_document
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+The following code is for Figure 3 and Supplementary 3.
 
 ```{r, import packages, results = FALSE, message=FALSE}
 library("data.table")
@@ -26,8 +22,6 @@ par(font.main=6)
 
 ```{r}
 coul <- brewer.pal(8, "Set2") 
-coul
-pie(rep(1, length(coul)), col = coul , main="") 
 
 ```
 
@@ -148,9 +142,9 @@ sampleid$sample_id <- sub("Meljuso_", "", sampleid$sample_id)
 
 
 
-### Parental Control vs VP64_p65_no_guide
+### Control vs VP64_p65_no_guide
 
-```{r, set up dds object and run for comp_5_4, results = FALSE, message=FALSE}
+```{r, Control vs VP64_p65_no_guide baseline vs LFC, results = FALSE, message=FALSE, warning=FALSE}
 comp_5_4 <- readcount[, c( sampleid[ sampleid$Name %in%  c('Control', 'VP64_p65_no_guide'),]$sample_id)]
 
 dds_comp_5_4 <- set_up_dds(comp_5_4, sampleid, 'Control')
@@ -168,7 +162,7 @@ baseline_lfc_plot(as.data.frame(shrink_dds_comp_5_4), norm_count_5_4, sampleid, 
 ```
 ### Parental Control vs VP64_vp64_no_guide 
 
-```{r, run and clean deseq2 for comp_5_3 and add gene name, results = FALSE, message=FALSE}
+```{r, Control vs VP64_vp64_no_guide baseline vs LFC, results = FALSE, message=FALSE, warning=FALSE}
 comp_5_3 <- readcount[, c( sampleid[ sampleid$Name %in%  c('Control', 'VP64_VP64_no_guide'),]$sample_id)]
 
 dds_comp_5_3 <- set_up_dds(comp_5_3, sampleid, 'Control')
@@ -190,7 +184,7 @@ baseline_lfc_plot(shrink_dds_comp_5_3, norm_count5_3, sampleid, 'Control', resul
 
 ### VP64_p65_with_guide vs VP64_p65_no_guide 
 
-```{r, test condition for comp_4_2 and set up dds object, results = FALSE, message=FALSE}
+```{r, Condition_VP64_p65_with_guide_vs_VP64_p65_no_guide baseline vs LFC, results = FALSE, message=FALSE, warning=FALSE}
 comp_4_2 <- readcount[, c( sampleid[ sampleid$Name %in%  c('VP64_p65_with_guide', 'VP64_p65_no_guide'),]$sample_id)]
 
 dds_comp_4_2 <- set_up_dds(comp_4_2, sampleid, 'VP64_p65_no_guide')
@@ -212,7 +206,7 @@ baseline_lfc_plot(shrink_dds_comp_4_2, norm_count4_2, sampleid, 'VP64_p65_no_gui
 
 ### VP64_VP64_with_guide vs VP64_VP64_no_guide
 
-```{r, test condition for comp_3_1 and set up dds object, results = FALSE, message=FALSE}
+```{r, Condition_VP64_VP64_with_guide_vs_VP64_VP64_no_guide baseline vs LFC, results = FALSE, message=FALSE, warning=FALSE}
 comp_3_1 <- readcount[, c( sampleid[ sampleid$Name %in%  c('VP64_VP64_with_guide', 'VP64_VP64_no_guide'),]$sample_id)]
 dds_comp_3_1 <- set_up_dds(comp_3_1, sampleid, 'VP64_VP64_no_guide')
 
@@ -248,7 +242,7 @@ crispick_result <- crispick_result[,c('Input', 'Target Gene Symbol', 'TSS Positi
 ```
 
 #### 5xtag-dCas12a-VP64 and p65-Nanobody with a cassette containing three CD4-targeting sgRNAs to 5xtag-dCas12a-VP64 and p65-Nanobody without a guide-containing cassette
-```{r VP64_p65_with_guide with VP64_p65_no_guide, echo=FALSE}
+```{r VP64_p65_with_guide with VP64_p65_no_guide gene 50kbs, echo=FALSE, warning=FALSE}
 res_df_comp_4_2 <- shrink_dds_comp_4_2
 res_df_comp_4_2 <- tibble::rownames_to_column(res_df_comp_4_2, "V1")
 res_df_comp_4_2[res_df_comp_4_2$padj == 0,]$padj <- .Machine$double.xmin
@@ -276,7 +270,7 @@ gene_500_4_2 %>%
 
 
 #### 5xtag-dCas12a-VP64 and VP64-Nanobody with a cassette containing three CD4-targeting sgRNAs to 5xtag-dCas12a-VP64 and VP64-Nanobody without a guide-containing cassette
-```{r VP64_VP64_with_guide with VP64_VP64_no_guide, echo=FALSE}
+```{r VP64_VP64_with_guide with VP64_VP64_no_guide gene 50kbs, echo=FALSE, warning=FALSE}
 res_df_comp_3_1 <- shrink_dds_comp_3_1
 res_df_comp_3_1 <- tibble::rownames_to_column(res_df_comp_3_1, "V1")
 res_df_comp_3_1[res_df_comp_3_1$padj == 0,]$padj <- .Machine$double.xmin
